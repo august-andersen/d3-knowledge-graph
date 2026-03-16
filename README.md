@@ -2,7 +2,7 @@
 
 # d3-knowledge-graph
 
-**AI-powered entity extraction pipeline that turns unstructured documents into interactive knowledge graphs.**
+**Entity extraction pipeline that turns unstructured documents into interactive knowledge graphs.**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
