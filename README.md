@@ -2,7 +2,7 @@
 
 # d3-knowledge-graph
 
-**AI-powered entity extraction pipeline that transforms unstructured documents into interactive D3.js force-directed knowledge graphs.**
+**AI-powered entity extraction pipeline that turns unstructured documents into interactive knowledge graphs.**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -25,7 +25,7 @@
 
 ## How It Works
 
-`kgraph` orchestrates a multi-stage AI pipeline that ingests raw documents and produces a live, interactive graph:
+`kgraph` initiates a multi-stage AI pipeline that ingests raw documents and produces a live, interactive graph:
 
 1. **Scan** — Recursively discovers `.md`, `.txt`, `.pdf`, and image files (`.jpg`, `.png`) in a target directory
 2. **Extract** — Sends each document through Claude's language and vision models to identify entities (people, concepts, technologies, theories) and their relationships
