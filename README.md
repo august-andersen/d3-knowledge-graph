@@ -17,7 +17,7 @@
 <br>
 <br>
 
-*One command. Your notes become a navigable network.*
+*One command. Your papers, notes, images, and docs become a navigable network.*
 
 </div>
 
