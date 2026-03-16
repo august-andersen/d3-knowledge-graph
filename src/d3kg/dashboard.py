@@ -45,9 +45,13 @@ def generate_dashboard_html(graph_data: dict, show_labels: bool = False) -> str:
 body {{
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Georgia', 'Times New Roman', 'Garamond', serif;
   overflow: hidden;
   transition: background 0.3s, color 0.3s;
+}}
+
+body.grayscale svg {{
+  filter: saturate(0);
 }}
 
 svg {{
@@ -70,6 +74,7 @@ svg {{
   color: var(--text);
   padding: 8px 16px;
   border-radius: 20px;
+  font-family: inherit;
   font-size: 14px;
   width: 300px;
   outline: none;
@@ -79,19 +84,25 @@ svg {{
 #search::placeholder {{ color: var(--text-secondary); }}
 #search:focus {{ border-color: #4ade80; }}
 
-#theme-toggle {{
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 10;
+.top-btn {{
   background: var(--input-bg);
   border: 1px solid var(--input-border);
   color: var(--text);
   padding: 6px 12px;
   border-radius: 16px;
   cursor: pointer;
+  font-family: inherit;
   font-size: 13px;
   transition: background 0.3s, border-color 0.3s, color 0.3s;
+}}
+
+#top-right {{
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
 }}
 
 #legend {{
@@ -218,7 +229,11 @@ svg {{
   <input type="text" id="search" placeholder="Search entities...">
 </div>
 
-<button id="theme-toggle">Light</button>
+<div id="top-right">
+  <button id="labels-toggle" class="top-btn" style="display:none">Labels: On</button>
+  <button id="grayscale-toggle" class="top-btn">Grayscale</button>
+  <button id="theme-toggle" class="top-btn">Light</button>
+</div>
 
 <div id="legend"><h3>Categories</h3></div>
 
@@ -232,7 +247,8 @@ svg {{
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 const graphData = {data_json};
-const showLabels = {show_labels_js};
+const showLabelsInit = {show_labels_js};
+let labelsVisible = showLabelsInit;
 
 const PALETTE = ['#4ade80','#60a5fa','#f472b6','#facc15','#a78bfa','#fb923c','#22d3ee','#e879f9','#34d399','#f87171','#818cf8','#fbbf24'];
 
@@ -252,7 +268,7 @@ graphData.relationships.forEach(r => {{
   connectionCount[t] = (connectionCount[t] || 0) + 1;
 }});
 
-// Build nodes and links
+// Identify connected components for clustering
 const nodeMap = {{}};
 const nodes = graphData.entities.map(e => {{
   const n = {{
@@ -276,11 +292,63 @@ const links = graphData.relationships
     weight: r.weight || 1
   }}));
 
-// SVG setup
-const svg = d3.select('svg');
+// Find connected components and assign cluster centers
+function findComponents() {{
+  const adj = {{}};
+  nodes.forEach(n => adj[n.id] = []);
+  links.forEach(l => {{
+    const s = typeof l.source === 'object' ? l.source.id : l.source;
+    const t = typeof l.target === 'object' ? l.target.id : l.target;
+    adj[s].push(t);
+    adj[t].push(s);
+  }});
+
+  const visited = new Set();
+  const components = [];
+
+  nodes.forEach(n => {{
+    if (visited.has(n.id)) return;
+    const comp = [];
+    const stack = [n.id];
+    while (stack.length) {{
+      const cur = stack.pop();
+      if (visited.has(cur)) continue;
+      visited.add(cur);
+      comp.push(cur);
+      (adj[cur] || []).forEach(nb => {{
+        if (!visited.has(nb)) stack.push(nb);
+      }});
+    }}
+    components.push(comp);
+  }});
+
+  return components;
+}}
+
+const components = findComponents();
+const componentOf = {{}};
+components.forEach((comp, i) => comp.forEach(id => componentOf[id] = i));
+
+// Arrange cluster centers in a grid so disconnected groups stay close
+const numComps = components.length;
+const cols = Math.ceil(Math.sqrt(numComps));
 const width = window.innerWidth;
 const height = window.innerHeight;
+const clusterCenters = components.map((comp, i) => {{
+  const row = Math.floor(i / cols);
+  const col = i % cols;
+  const rows = Math.ceil(numComps / cols);
+  // Scale spacing by component size so bigger clusters get more room
+  const cellW = width / (cols + 1);
+  const cellH = height / (rows + 1);
+  return {{
+    x: cellW * (col + 1),
+    y: cellH * (row + 1)
+  }};
+}});
 
+// SVG setup
+const svg = d3.select('svg');
 const g = svg.append('g');
 
 const zoom = d3.zoom()
@@ -288,12 +356,20 @@ const zoom = d3.zoom()
   .on('zoom', (event) => g.attr('transform', event.transform));
 svg.call(zoom);
 
-// Simulation
+// Simulation with improved forces
 const simulation = d3.forceSimulation(nodes)
-  .force('link', d3.forceLink(links).id(d => d.id).distance(d => 100 / d.weight))
-  .force('charge', d3.forceManyBody().strength(-200))
-  .force('center', d3.forceCenter(width / 2, height / 2))
-  .force('collision', d3.forceCollide().radius(d => d.radius + 5));
+  .force('link', d3.forceLink(links).id(d => d.id).distance(d => 80 + 40 / d.weight).strength(0.7))
+  .force('charge', d3.forceManyBody().strength(-300).distanceMax(500))
+  .force('collision', d3.forceCollide().radius(d => d.radius + 20).strength(0.8))
+  .force('cluster', function(alpha) {{
+    nodes.forEach(n => {{
+      const ci = componentOf[n.id];
+      if (ci === undefined) return;
+      const center = clusterCenters[ci];
+      n.vx += (center.x - n.x) * alpha * 0.15;
+      n.vy += (center.y - n.y) * alpha * 0.15;
+    }});
+  }});
 
 // Links
 const linkGroup = g.append('g').attr('class', 'links');
@@ -304,18 +380,16 @@ const link = linkGroup.selectAll('line')
   .attr('stroke-width', d => d.weight)
   .attr('stroke-opacity', 0.6);
 
-// Edge labels (if enabled)
-let edgeLabel;
-if (showLabels) {{
-  edgeLabel = linkGroup.selectAll('text')
-    .data(links)
-    .join('text')
-    .text(d => d.label)
-    .attr('font-size', '9px')
-    .attr('fill', 'var(--text-secondary)')
-    .attr('text-anchor', 'middle')
-    .attr('dy', -4);
-}}
+// Edge labels — always create them, control visibility
+const edgeLabel = linkGroup.selectAll('text')
+  .data(links)
+  .join('text')
+  .text(d => d.label)
+  .attr('font-size', '9px')
+  .attr('fill', 'var(--text-secondary)')
+  .attr('text-anchor', 'middle')
+  .attr('dy', -4)
+  .style('display', labelsVisible ? 'block' : 'none');
 
 // Nodes
 const nodeGroup = g.append('g').attr('class', 'nodes');
@@ -342,7 +416,7 @@ const label = nodeGroup.selectAll('text')
   .attr('dx', d => d.radius + 4)
   .attr('dy', 4)
   .style('pointer-events', 'none')
-  .style('opacity', nodes.length > 100 ? 0 : 1);
+  .style('opacity', nodes.length > 150 ? 0 : 1);
 
 // Tick
 simulation.on('tick', () => {{
@@ -352,11 +426,9 @@ simulation.on('tick', () => {{
     .attr('x2', d => d.target.x)
     .attr('y2', d => d.target.y);
 
-  if (showLabels && edgeLabel) {{
-    edgeLabel
-      .attr('x', d => (d.source.x + d.target.x) / 2)
-      .attr('y', d => (d.source.y + d.target.y) / 2);
-  }}
+  edgeLabel
+    .attr('x', d => (d.source.x + d.target.x) / 2)
+    .attr('y', d => (d.source.y + d.target.y) / 2);
 
   node
     .attr('cx', d => d.x)
@@ -381,7 +453,6 @@ function dragging(event, d) {{
 
 function dragEnd(event, d) {{
   if (!event.active) simulation.alphaTarget(0);
-  // Pin node where it was dropped
   d.fx = event.x;
   d.fy = event.y;
 }}
@@ -406,23 +477,22 @@ node.on('mouseenter', function(event, d) {{
     return s === d.id || t === d.id ? 1 : 0.05;
   }});
   label.style('opacity', n => {{
-    if (nodes.length > 100) return n.id === d.id || connected.has(n.id) ? 1 : 0;
+    if (nodes.length > 150) return n.id === d.id || connected.has(n.id) ? 1 : 0;
     return n.id === d.id || connected.has(n.id) ? 1 : 0.15;
   }});
-  if (showLabels && edgeLabel) {{
-    edgeLabel.style('opacity', l => {{
-      const s = typeof l.source === 'object' ? l.source.id : l.source;
-      const t = typeof l.target === 'object' ? l.target.id : l.target;
-      return s === d.id || t === d.id ? 1 : 0.05;
-    }});
-  }}
+  edgeLabel.style('opacity', l => {{
+    if (!labelsVisible) return 0;
+    const s = typeof l.source === 'object' ? l.source.id : l.source;
+    const t = typeof l.target === 'object' ? l.target.id : l.target;
+    return s === d.id || t === d.id ? 1 : 0.05;
+  }});
 }});
 
 node.on('mouseleave', function() {{
   node.attr('opacity', 1);
   link.attr('opacity', 0.6);
-  label.style('opacity', nodes.length > 100 ? 0 : 1);
-  if (showLabels && edgeLabel) edgeLabel.style('opacity', 1);
+  label.style('opacity', nodes.length > 150 ? 0 : 1);
+  edgeLabel.style('opacity', labelsVisible ? 1 : 0);
 }});
 
 // Edge hover tooltip
@@ -476,7 +546,6 @@ node.on('click', function(event, d) {{
     <ul>${{connections || '<li style="color:var(--text-secondary)">None</li>'}}</ul>
   `);
 
-  // Position near node
   let px = event.clientX + 20;
   let py = event.clientY - 40;
   if (px + 360 > window.innerWidth) px = event.clientX - 380;
@@ -500,7 +569,7 @@ searchInput.addEventListener('input', function() {{
   const q = this.value.toLowerCase().trim();
   if (!q) {{
     node.attr('opacity', 1);
-    label.style('opacity', nodes.length > 100 ? 0 : 1);
+    label.style('opacity', nodes.length > 150 ? 0 : 1);
     link.attr('opacity', 0.6);
     return;
   }}
@@ -523,6 +592,26 @@ const filesProcessed = new Set(graphData.entities.flatMap(e => e.source_files ||
 document.getElementById('stats').textContent =
   `${{nodes.length}} entities, ${{links.length}} relationships, ${{filesProcessed}} files processed`;
 
+// Labels toggle (only show button when launched with --labels)
+const labelsBtn = document.getElementById('labels-toggle');
+if (showLabelsInit) {{
+  labelsBtn.style.display = 'inline-block';
+}}
+labelsBtn.addEventListener('click', () => {{
+  labelsVisible = !labelsVisible;
+  labelsBtn.textContent = labelsVisible ? 'Labels: On' : 'Labels: Off';
+  edgeLabel.style('display', labelsVisible ? 'block' : 'none');
+}});
+
+// Grayscale toggle
+const grayBtn = document.getElementById('grayscale-toggle');
+let isGrayscale = false;
+grayBtn.addEventListener('click', () => {{
+  isGrayscale = !isGrayscale;
+  document.body.classList.toggle('grayscale', isGrayscale);
+  grayBtn.textContent = isGrayscale ? 'Color' : 'Grayscale';
+}});
+
 // Theme
 const themeBtn = document.getElementById('theme-toggle');
 const savedTheme = localStorage.getItem('kg-theme') || 'dark';
@@ -542,6 +631,26 @@ themeBtn.addEventListener('click', () => {{
     themeBtn.textContent = 'Dark';
     localStorage.setItem('kg-theme', 'light');
   }}
+}});
+
+// Fit graph into view after simulation settles
+simulation.on('end', () => {{
+  const bounds = g.node().getBBox();
+  if (bounds.width === 0 || bounds.height === 0) return;
+  const pad = 60;
+  const fullWidth = window.innerWidth;
+  const fullHeight = window.innerHeight;
+  const scale = Math.min(
+    (fullWidth - pad * 2) / bounds.width,
+    (fullHeight - pad * 2) / bounds.height,
+    1.5
+  );
+  const tx = fullWidth / 2 - (bounds.x + bounds.width / 2) * scale;
+  const ty = fullHeight / 2 - (bounds.y + bounds.height / 2) * scale;
+  svg.transition().duration(750).call(
+    zoom.transform,
+    d3.zoomIdentity.translate(tx, ty).scale(scale)
+  );
 }});
 </script>
 </body>
