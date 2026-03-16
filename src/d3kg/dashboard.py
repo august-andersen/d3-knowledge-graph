@@ -18,8 +18,8 @@ def generate_dashboard_html(graph_data: dict, show_labels: bool = False) -> str:
   --bg: #0a0a0a;
   --text: #ffffff;
   --text-secondary: #999999;
-  --edge: #333333;
-  --edge-hover: #666666;
+  --edge: #555555;
+  --edge-hover: #888888;
   --popup-bg: #1a1a1a;
   --popup-border: #333333;
   --input-bg: #1a1a1a;
@@ -31,8 +31,8 @@ def generate_dashboard_html(graph_data: dict, show_labels: bool = False) -> str:
   --bg: #fafafa;
   --text: #111111;
   --text-secondary: #666666;
-  --edge: #cccccc;
-  --edge-hover: #999999;
+  --edge: #bbbbbb;
+  --edge-hover: #888888;
   --popup-bg: #ffffff;
   --popup-border: #dddddd;
   --input-bg: #ffffff;
@@ -50,7 +50,8 @@ body {{
   transition: background 0.3s, color 0.3s;
 }}
 
-body.grayscale svg {{
+body.grayscale svg,
+body.grayscale #legend {{
   filter: saturate(0);
 }}
 
@@ -117,7 +118,7 @@ svg {{
   font-size: 12px;
   max-height: 300px;
   overflow-y: auto;
-  transition: background 0.3s, border-color 0.3s;
+  transition: background 0.3s, border-color 0.3s, filter 0.3s;
 }}
 
 #legend h3 {{
@@ -259,7 +260,7 @@ categories.forEach((cat, i) => {{
   categoryColor[cat] = PALETTE[i % PALETTE.length];
 }});
 
-// Build node connection counts
+// Build node connection counts and category lookup
 const connectionCount = {{}};
 graphData.relationships.forEach(r => {{
   const s = r.source.toLowerCase();
@@ -268,7 +269,6 @@ graphData.relationships.forEach(r => {{
   connectionCount[t] = (connectionCount[t] || 0) + 1;
 }});
 
-// Identify connected components for clustering
 const nodeMap = {{}};
 const nodes = graphData.entities.map(e => {{
   const n = {{
@@ -285,14 +285,19 @@ const nodes = graphData.entities.map(e => {{
 
 const links = graphData.relationships
   .filter(r => nodeMap[r.source.toLowerCase()] && nodeMap[r.target.toLowerCase()])
-  .map(r => ({{
-    source: nodeMap[r.source.toLowerCase()].id,
-    target: nodeMap[r.target.toLowerCase()].id,
-    label: r.label || 'relates to',
-    weight: r.weight || 1
-  }}));
+  .map(r => {{
+    const sNode = nodeMap[r.source.toLowerCase()];
+    const tNode = nodeMap[r.target.toLowerCase()];
+    return {{
+      source: sNode.id,
+      target: tNode.id,
+      label: r.label || 'relates to',
+      weight: r.weight || 1,
+      sameCategory: sNode.category === tNode.category
+    }};
+  }});
 
-// Find connected components and assign cluster centers
+// Find connected components
 function findComponents() {{
   const adj = {{}};
   nodes.forEach(n => adj[n.id] = []);
@@ -329,22 +334,29 @@ const components = findComponents();
 const componentOf = {{}};
 components.forEach((comp, i) => comp.forEach(id => componentOf[id] = i));
 
-// Arrange cluster centers in a grid so disconnected groups stay close
+// Arrange cluster centers — scale spacing by component size
 const numComps = components.length;
 const cols = Math.ceil(Math.sqrt(numComps));
+const rows = Math.ceil(numComps / cols);
 const width = window.innerWidth;
 const height = window.innerHeight;
-const clusterCenters = components.map((comp, i) => {{
+
+// Give each component space proportional to its size
+const totalNodes = nodes.length;
+const clusterCenters = [];
+let gridX = 0, gridY = 0, rowMaxH = 0;
+const spacingScale = Math.max(width, height) * 0.6;
+
+components.forEach((comp, i) => {{
   const row = Math.floor(i / cols);
   const col = i % cols;
-  const rows = Math.ceil(numComps / cols);
-  // Scale spacing by component size so bigger clusters get more room
-  const cellW = width / (cols + 1);
-  const cellH = height / (rows + 1);
-  return {{
-    x: cellW * (col + 1),
-    y: cellH * (row + 1)
-  }};
+  // Spread across a wide virtual canvas
+  const cellW = width * 1.5 / cols;
+  const cellH = height * 1.5 / rows;
+  clusterCenters.push({{
+    x: cellW * (col + 0.5),
+    y: cellH * (row + 0.5)
+  }});
 }});
 
 // SVG setup
@@ -352,22 +364,29 @@ const svg = d3.select('svg');
 const g = svg.append('g');
 
 const zoom = d3.zoom()
-  .scaleExtent([0.1, 8])
+  .scaleExtent([0.05, 8])
   .on('zoom', (event) => g.attr('transform', event.transform));
 svg.call(zoom);
 
-// Simulation with improved forces
+// Link distance: same-category links are shorter (tight clusters),
+// cross-category links are longer (visual separation between groups)
+function linkDistance(d) {{
+  const base = d.sameCategory ? 80 : 180;
+  return base + 30 / d.weight;
+}}
+
+// Simulation
 const simulation = d3.forceSimulation(nodes)
-  .force('link', d3.forceLink(links).id(d => d.id).distance(d => 80 + 40 / d.weight).strength(0.7))
-  .force('charge', d3.forceManyBody().strength(-300).distanceMax(500))
-  .force('collision', d3.forceCollide().radius(d => d.radius + 20).strength(0.8))
+  .force('link', d3.forceLink(links).id(d => d.id).distance(linkDistance).strength(d => d.sameCategory ? 0.8 : 0.3))
+  .force('charge', d3.forceManyBody().strength(-500).distanceMax(800))
+  .force('collision', d3.forceCollide().radius(d => d.radius + 40).strength(1))
   .force('cluster', function(alpha) {{
     nodes.forEach(n => {{
       const ci = componentOf[n.id];
       if (ci === undefined) return;
       const center = clusterCenters[ci];
-      n.vx += (center.x - n.x) * alpha * 0.15;
-      n.vy += (center.y - n.y) * alpha * 0.15;
+      n.vx += (center.x - n.x) * alpha * 0.08;
+      n.vy += (center.y - n.y) * alpha * 0.08;
     }});
   }});
 
@@ -378,9 +397,9 @@ const link = linkGroup.selectAll('line')
   .join('line')
   .attr('stroke', 'var(--edge)')
   .attr('stroke-width', d => d.weight)
-  .attr('stroke-opacity', 0.6);
+  .attr('stroke-opacity', 0.7);
 
-// Edge labels — always create them, control visibility
+// Edge labels — always create, control visibility
 const edgeLabel = linkGroup.selectAll('text')
   .data(links)
   .join('text')
@@ -413,7 +432,7 @@ const label = nodeGroup.selectAll('text')
   .text(d => d.id)
   .attr('font-size', d => Math.max(10, Math.min(14, d.radius + 2)) + 'px')
   .attr('fill', 'var(--text)')
-  .attr('dx', d => d.radius + 4)
+  .attr('dx', d => d.radius + 6)
   .attr('dy', 4)
   .style('pointer-events', 'none')
   .style('opacity', nodes.length > 150 ? 0 : 1);
@@ -490,7 +509,7 @@ node.on('mouseenter', function(event, d) {{
 
 node.on('mouseleave', function() {{
   node.attr('opacity', 1);
-  link.attr('opacity', 0.6);
+  link.attr('opacity', 0.7);
   label.style('opacity', nodes.length > 150 ? 0 : 1);
   edgeLabel.style('opacity', labelsVisible ? 1 : 0);
 }});
@@ -512,7 +531,7 @@ link.on('mousemove', function(event) {{
 }});
 link.on('mouseleave', function() {{
   edgeTooltip.style('display', 'none');
-  d3.select(this).attr('stroke', 'var(--edge)').attr('stroke-opacity', 0.6);
+  d3.select(this).attr('stroke', 'var(--edge)').attr('stroke-opacity', 0.7);
 }});
 
 // Click popup
@@ -570,7 +589,7 @@ searchInput.addEventListener('input', function() {{
   if (!q) {{
     node.attr('opacity', 1);
     label.style('opacity', nodes.length > 150 ? 0 : 1);
-    link.attr('opacity', 0.6);
+    link.attr('opacity', 0.7);
     return;
   }}
   node.attr('opacity', d => d.idLower.includes(q) ? 1 : 0.1);
@@ -637,7 +656,7 @@ themeBtn.addEventListener('click', () => {{
 simulation.on('end', () => {{
   const bounds = g.node().getBBox();
   if (bounds.width === 0 || bounds.height === 0) return;
-  const pad = 60;
+  const pad = 80;
   const fullWidth = window.innerWidth;
   const fullHeight = window.innerHeight;
   const scale = Math.min(
