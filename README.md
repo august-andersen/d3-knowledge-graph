@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Anthropic API](https://img.shields.io/badge/AI-Claude%20Sonnet%204-blueviolet.svg)](https://www.anthropic.com)
 [![D3.js v7](https://img.shields.io/badge/D3.js-v7-orange.svg)](https://d3js.org)
-[![Built with Claude Code](https://img.shields.io/badge/built%20with-Claude%20Code-6B5CE7)](https://claude.com/claude-code)
+[![Flask](https://img.shields.io/badge/Flask-server-lightgrey.svg)](https://flask.palletsprojects.com)
 
 <br>
 
